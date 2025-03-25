@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Buscador de Vuelos</title>
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css">
+    <script>
+        function validarBusqueda() {
+            let origen = document.getElementById("source_city").value;
+            let destino = document.getElementById("destination_city").value;
+            document.getElementById("buscar").disabled = (origen === destino);
+        }
+    </script>
+</head>
+<body>
+    <div class="container mt-4">
+        <h1 class="text-center">Buscador de Vuelos</h1>
+        <form id="flightForm" class="d-flex justify-content-between align-items-center bg-light p-3 rounded">
+            <div class="form-group mb-0">
+                <label for="source_city">Origen:</label>
+                <select class="form-control" id="source_city" name="source_city" onchange="validarBusqueda()">
+                    {% for city in source_cities %}
+                    <option>{{ city }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group mb-0">
+                <label for="destination_city">Destino:</label>
+                <select class="form-control" id="destination_city" name="destination_city" onchange="validarBusqueda()">
+                    {% for city in destination_cities %}
+                    <option>{{ city }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group mb-0">
+                <label for="flight_date">Fecha de Vuelo:</label>
+                <input type="date" class="form-control" id="flight_date" name="flight_date" min="">
+            </div>
+            <button type="submit" class="btn btn-primary" id="buscar" disabled>Buscar</button>
+        </form>
+
+        <div class="mt-3 d-flex justify-content-between align-items-center">
+            <div>
+                <h5>Filtrar por Clase:</h5>
+                <label><input type="checkbox" class="filter-class" value="Economy" checked> Economy</label>
+                <label><input type="checkbox" class="filter-class" value="Business" checked> Business</label>
+            </div>
+            <div>
+                <h5>Filtrar por Escalas:</h5>
+                <label><input type="checkbox" class="filter-stops" value="zero" checked> Sin escalas</label>
+                <label><input type="checkbox" class="filter-stops" value="one" checked> Una escala</label>
+                <label><input type="checkbox" class="filter-stops" value="two_or_more" checked> Dos o más escalas</label>
+            </div>
+            <div>
+                <button class="btn btn-secondary" onclick="sortTableByPrice()">Ordenar por Precio <span id="priceArrow">⬇️</span></button>
+                <button class="btn btn-secondary" onclick="sortTableByStops()">Ordenar por Escalas <span id="stopsArrow">⬇️</span></button>
+            </div>
+        </div>
+
+        <div id="predictionResult" class="mt-3"></div>
+    </div>
+
+    <script>
+        let priceAscending = false;
+        let stopsAscending = false;
+
+        document.addEventListener("DOMContentLoaded", function() {
+            let today = new Date().toISOString().split("T")[0];
+            document.getElementById("flight_date").setAttribute("min", today);
+
+            document.querySelectorAll('.filter-class, .filter-stops').forEach(checkbox => {
+                checkbox.addEventListener('change', filterResults);
+            });
+        });
+
+        document.getElementById('flightForm').addEventListener('submit', function(event) {
+            event.preventDefault();
+
+            let sourceCity = document.getElementById('source_city').value;
+            let destinationCity = document.getElementById('destination_city').value;
+
+            if (sourceCity === destinationCity) {
+                return;
+            }
+
+            let flightDate = document.getElementById('flight_date').value;
+            let today = new Date();
+            let selectedDate = new Date(flightDate);
+            let timeDiff = selectedDate - today;
+            let daysLeft = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
+
+            if (daysLeft < 0) {
+                alert("La fecha seleccionada no puede ser en el pasado.");
+                return;
+            }
+
+            let airlines = {
+                "Air_India": ["Economy", "Business"],
+                "Vistara": ["Economy", "Business"],
+                "SpiceJet": ["Economy"],
+                "Indigo": ["Economy"],
+                "GO_FIRST": ["Economy"],
+                "AirAsia": ["Economy"]
+            };
+            let stopsOptions = ["zero", "one", "two_or_more"];
+
+            let requests = [];
+            Object.keys(airlines).forEach(airline => {
+                stopsOptions.forEach(stops => {
+                    airlines[airline].forEach(classType => {
+                        let formData = new FormData();
+                        formData.append('source_city', sourceCity);
+                        formData.append('destination_city', destinationCity);
+                        formData.append('days_left', daysLeft);
+                        formData.append('airline', airline);
+                        formData.append('stops', stops);
+                        formData.append('class_type', classType);
+                        requests.push(fetch('/predict', { method: 'POST', body: formData }).then(response => response.json()));
+                    });
+                });
+            });
+
+            Promise.all(requests).then(results => {
+                window.allResults = results;
+                filterResults();
+            })
+            .catch(error => console.error('Error:', error));
+        });
+
+        function filterResults() {
+            let selectedClasses = Array.from(document.querySelectorAll('.filter-class:checked')).map(el => el.value);
+            let selectedStops = Array.from(document.querySelectorAll('.filter-stops:checked')).map(el => el.value);
+
+            let tableHTML = 
+                `<table class='table table-bordered mt-3' id='flightTable'>
+                    <thead class='thead-dark'>
+                        <tr>
+                            <th>Aerolínea</th>
+                            <th>Clase</th>
+                            <th>Escalas</th>
+                            <th>Precio</th>
+                        </tr>
+                    </thead>
+                    <tbody>`;
+
+            window.allResults.forEach(data => {
+                if (!('error' in data) && selectedClasses.includes(data.class_type) && selectedStops.includes(data.stops)) {
+                    tableHTML += 
+                        `<tr>
+                            <td>${data.airline}</td>
+                            <td>${data.class_type}</td>
+                            <td>${data.stops}</td>
+                            <td>${Math.round(data.predicted_price)}</td>
+                        </tr>`;
+                }
+            });
+
+            tableHTML += "</tbody></table>";
+            document.getElementById('predictionResult').innerHTML = tableHTML;
+        }
+
+        function sortTableByPrice() {
+            priceAscending = !priceAscending;
+            window.allResults.sort((a, b) => priceAscending ? a.predicted_price - b.predicted_price : b.predicted_price - a.predicted_price);
+            document.getElementById("priceArrow").textContent = priceAscending ? "⬆️" : "⬇️";
+            filterResults();
+        }
+
+        function sortTableByStops() {
+            stopsAscending = !stopsAscending;
+            const stopOrder = { "two_or_more": 2, "one": 1, "zero": 0 };
+
+            window.allResults.sort((a, b) => {
+                return stopsAscending 
+                    ? stopOrder[a.stops] - stopOrder[b.stops] 
+                    : stopOrder[b.stops] - stopOrder[a.stops];
+            });
+
+            document.getElementById("stopsArrow").textContent = stopsAscending ? "⬆️" : "⬇️";
+            filterResults();
+        }
+    </script>
+</body>
+</html>
